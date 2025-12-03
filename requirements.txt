@@ -1,0 +1,13 @@
+# Python dependencies for the project
+
+# Ansible
+ansible>=2.9.0,<8.0.0
+
+# AWS CLI for Localstack interactions
+awscli>=1.27.0
+
+# Boto3 for Python AWS SDK (used by Ansible AWS modules)
+boto3>=1.26.0
+
+# Additional useful tools
+jmespath>=1.0.0  # JSON query language for AWS CLI

@@ -1,0 +1,200 @@
+---
+- name: Security Hardening for Web Servers
+  hosts: webservers
+  gather_facts: yes
+  become: yes
+
+  vars:
+    # Security configurations
+    ssh_port: 22
+    disable_root_login: yes
+    password_authentication: no
+    fail2ban_enabled: yes
+
+  tasks:
+    - name: Security Hardening Block
+      block:
+        # System Updates and Patching
+        - name: Update all packages to latest version (Debian/Ubuntu)
+          apt:
+            upgrade: dist
+            update_cache: yes
+            cache_valid_time: 3600
+          when: ansible_os_family == "Debian"
+          ignore_errors: yes
+
+        # Install security packages
+        - name: Install security tools
+          package:
+            name:
+              - ufw
+              - fail2ban
+              - unattended-upgrades
+              - aide
+            state: present
+          ignore_errors: yes
+          register: security_tools
+
+        # Configure UFW firewall
+        - name: Configure UFW - Allow SSH
+          ufw:
+            rule: limit
+            port: "{{ ssh_port }}"
+            proto: tcp
+          when: security_tools is succeeded
+          ignore_errors: yes
+
+        - name: Configure UFW - Allow HTTP
+          ufw:
+            rule: allow
+            port: 80
+            proto: tcp
+          when: security_tools is succeeded
+          ignore_errors: yes
+
+        - name: Configure UFW - Allow HTTPS
+          ufw:
+            rule: allow
+            port: 443
+            proto: tcp
+          when: security_tools is succeeded
+          ignore_errors: yes
+
+        - name: Enable UFW
+          ufw:
+            state: enabled
+            policy: deny
+            direction: incoming
+          when: security_tools is succeeded
+          ignore_errors: yes
+
+        # Configure Fail2Ban
+        - name: Configure Fail2Ban for SSH
+          copy:
+            dest: /etc/fail2ban/jail.local
+            content: |
+              [DEFAULT]
+              bantime = 3600
+              findtime = 600
+              maxretry = 5
+
+              [sshd]
+              enabled = true
+              port = {{ ssh_port }}
+              logpath = /var/log/auth.log
+
+              [nginx-http-auth]
+              enabled = true
+              port = http,https
+              logpath = /var/log/nginx/error.log
+            mode: '0644'
+          when: security_tools is succeeded
+          ignore_errors: yes
+          notify: Restart fail2ban
+
+        # SSH Hardening
+        - name: Harden SSH configuration
+          lineinfile:
+            path: /etc/ssh/sshd_config
+            regexp: "{{ item.regexp }}"
+            line: "{{ item.line }}"
+            state: present
+            backup: yes
+          loop:
+            - { regexp: '^#?PermitRootLogin', line: 'PermitRootLogin no' }
+            - { regexp: '^#?PasswordAuthentication', line: 'PasswordAuthentication no' }
+            - { regexp: '^#?PubkeyAuthentication', line: 'PubkeyAuthentication yes' }
+            - { regexp: '^#?X11Forwarding', line: 'X11Forwarding no' }
+            - { regexp: '^#?MaxAuthTries', line: 'MaxAuthTries 3' }
+            - { regexp: '^#?ClientAliveInterval', line: 'ClientAliveInterval 300' }
+            - { regexp: '^#?ClientAliveCountMax', line: 'ClientAliveCountMax 2' }
+            - { regexp: '^#?Protocol', line: 'Protocol 2' }
+          when: disable_root_login
+          ignore_errors: yes
+          notify: Restart SSH
+
+        # Kernel Security Parameters
+        - name: Configure kernel security parameters
+          sysctl:
+            name: "{{ item.name }}"
+            value: "{{ item.value }}"
+            state: present
+            reload: yes
+            sysctl_file: /etc/sysctl.d/99-security.conf
+          loop:
+            # Network security
+            - { name: 'net.ipv4.conf.all.accept_source_route', value: '0' }
+            - { name: 'net.ipv4.conf.default.accept_source_route', value: '0' }
+            - { name: 'net.ipv4.conf.all.accept_redirects', value: '0' }
+            - { name: 'net.ipv4.conf.default.accept_redirects', value: '0' }
+            - { name: 'net.ipv4.conf.all.secure_redirects', value: '0' }
+            - { name: 'net.ipv4.conf.default.secure_redirects', value: '0' }
+            - { name: 'net.ipv4.conf.all.send_redirects', value: '0' }
+            - { name: 'net.ipv4.conf.default.send_redirects', value: '0' }
+            - { name: 'net.ipv4.icmp_echo_ignore_broadcasts', value: '1' }
+            - { name: 'net.ipv4.icmp_ignore_bogus_error_responses', value: '1' }
+            - { name: 'net.ipv4.tcp_syncookies', value: '1' }
+            - { name: 'net.ipv4.conf.all.rp_filter', value: '1' }
+            - { name: 'net.ipv4.conf.default.rp_filter', value: '1' }
+            # IPv6 (disable if not used)
+            - { name: 'net.ipv6.conf.all.disable_ipv6', value: '1' }
+            - { name: 'net.ipv6.conf.default.disable_ipv6', value: '1' }
+          ignore_errors: yes
+
+        # Configure automatic security updates
+        - name: Enable automatic security updates
+          copy:
+            dest: /etc/apt/apt.conf.d/50unattended-upgrades
+            content: |
+              Unattended-Upgrade::Allowed-Origins {
+                  "${distro_id}:${distro_codename}-security";
+              };
+              Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+              Unattended-Upgrade::MinimalSteps "true";
+              Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+              Unattended-Upgrade::Remove-Unused-Dependencies "true";
+              Unattended-Upgrade::Automatic-Reboot "false";
+            mode: '0644'
+          when: ansible_os_family == "Debian"
+          ignore_errors: yes
+
+        # Disable unnecessary services
+        - name: Disable unnecessary services
+          systemd:
+            name: "{{ item }}"
+            enabled: no
+            state: stopped
+          loop:
+            - bluetooth
+            - cups
+          ignore_errors: yes
+          failed_when: false
+
+        # Set secure file permissions
+        - name: Set secure permissions on sensitive files
+          file:
+            path: "{{ item }}"
+            mode: '0600'
+          loop:
+            - /etc/ssh/sshd_config
+            - /etc/gshadow
+            - /etc/shadow
+          ignore_errors: yes
+
+      rescue:
+        - name: Security hardening failed
+          debug:
+            msg: "Some security hardening tasks failed. This is expected in Localstack mode."
+
+  handlers:
+    - name: Restart SSH
+      service:
+        name: ssh
+        state: restarted
+      ignore_errors: yes
+
+    - name: Restart fail2ban
+      service:
+        name: fail2ban
+        state: restarted
+      ignore_errors: yes
