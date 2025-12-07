@@ -55,5 +55,7 @@ Thumbs.db
 .github/PULL_REQUEST_TEMPLATE.md
 .github/SECURITY_POLICY.md
 .github/dependabot.yml
+.github/workflows/*.disabled
+.github/workflows/*.backup
 PROJECT_SUMMARY.md
 SECURITY_AUDIT_REPORT.md
