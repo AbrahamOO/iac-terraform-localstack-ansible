@@ -49,3 +49,11 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Repository-specific files (not needed for core functionality)
+.github/CODEOWNERS
+.github/PULL_REQUEST_TEMPLATE.md
+.github/SECURITY_POLICY.md
+.github/dependabot.yml
+PROJECT_SUMMARY.md
+SECURITY_AUDIT_REPORT.md
